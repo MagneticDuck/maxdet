@@ -4,31 +4,35 @@ module Det where
 import qualified Data.List as L
 import Data.List ((\\))
 import Data.Maybe
+import Control.Monad
 import Data.Ord (comparing)
 import Data.List.Split
 
 tagWith :: (a -> b) -> a -> (a, b)
 tagWith f x = (x, f x)
 
--- An enumeration is implemented as a lazy list.
-newtype Enumeration a = Enumeration { fromEnumeration :: [a] }
-  deriving (Eq, Functor, Applicative, Monad, Monoid, Foldable)
-instance (Show a) => Show (Enumeration a) where
-  show (Enumeration xs) = L.intercalate ", " $ map show xs
-
-combinations :: Int -> [a] -> Enumeration [a]
-combinations = (Enumeration .) . choose
-  where choose 0 _  = [[]]
-        choose _ [] = []
-        choose k' (x:xs) = map (x:) (choose (k' - 1) xs) ++ choose k' xs
-
-permutations :: [a] -> Enumeration [a]
-permutations = Enumeration . L.permutations 
-
+-- ** 3x3 matrix utilities. **
 type Mat a = [[a]]
 
--- Enumerate n \times n matrices up to similarity under row / column permutations 
--- and transposition.
+det3 :: (Num a) => Mat a -> a
+det3 [[a, b, c], [d, e, f], [g, h, i]] =
+  a * e * i - g * e * c + b * f * g + d * h * c - b * d * i - f * h * a
+
+cofactorSum :: (Num a) => Mat a -> a
+cofactorSum [[a, b, c], [d, e, f], [g, h, i]] =
+  -b*d + c*d + a*e - c*e - a*f + b*f + b*g - c*g - e*g + f*g - a*h + c*h + d*h - f*h + a*i - b*i - d*i + e*i
+
+-- ** Enumerations, ultimately of our search space. **
+type Enumeration a = [a]
+
+combinations :: Int -> [a] -> Enumeration [a]
+combinations 0 _ = [[]]
+combinations _ [] = []
+combinations k (x:xs) = map (x:) (combinations (k - 1) xs) ++ combinations k xs
+
+permutations :: [a] -> Enumeration [a]
+permutations = L.permutations 
+
 matrixIncidences :: Int -> Enumeration (Mat Int)
 matrixIncidences n = do
   hook <- combinations (2*n - 2) [2..n^2]
@@ -36,54 +40,103 @@ matrixIncidences n = do
   body <- chunksOf (n - 1) <$> permutations ([2..n^2] \\ hook)
   return $ (1:line) : zipWith (:) col body
 
--- Compute a 3 \times 3 determinant via cofactor expansion.
-det3 :: (Num a) => Mat a -> a
-det3 [[a, b, c], [d, e, f], [g, h, i]] =
-  a * e * i - g * e * c + b * f * g + d * h * c - b * d * i - f * h * a -- maybe LU?
+-- ** Utilities for {piecewise} linear functions in 1 dimension. **
 
--- Compute an n \times n determinant via LU decomposition.
-det :: (Num a) => Mat a -> a
-det = undefined
+data Linear = Linear Rational Rational deriving (Eq) -- (m, b) -> m x + b
+type Piecewise = [(Rational, Rational)] -- Linear interpolation of the points.
+data Range = Range Rational Rational deriving (Show, Eq)
 
--- Determine all the optimal configurations for a set of 9. Matrix configurations
--- are represented with integer codes. View them with `recallConfig`.
+inRange :: Range -> Rational -> Bool
+inRange (Range low high) rat = rat <= high && rat >= low
+
+interpolate :: Piecewise -> [(Range, Linear)]
+interpolate pcs = zipWith makePair pcs (drop 1 pcs)
+  where makePair (x1, y1) (x2, y2) = let m = (y2 - y1) / (x2 - x1) in 
+          (Range x1 x2, Linear m (y1 - m * x1))
+
+instance Show Linear where show (Linear m b) = "(" ++ show m ++ ") x + (" ++ show b ++ ")"
+
+evalLinear :: Linear -> Rational -> Rational
+evalLinear (Linear m b) x = m * x + b
+
+evalPiecewise :: Piecewise -> Rational -> Maybe Rational
+evalPiecewise pcs x = flip evalLinear x . snd <$> 
+  (L.find (flip inRange x . fst) $ interpolate pcs)
+
+linearToPiecewise :: Rational -> Rational -> Linear -> Piecewise
+linearToPiecewise x1 x2 l = [(x1, (evalLinear l x1)), (x2, (evalLinear l x2))]
+ 
+intersectLinear :: Linear -> Linear -> Maybe Rational
+intersectLinear (Linear m1 b1) (Linear m2 b2) = 
+  if v == 0 then Nothing else Just $ (b2 - b1) / v where v = m1 - m2
+
+intersectPiecewise :: Piecewise -> Linear -> [Rational]
+intersectPiecewise xs l = 
+  concatMap (maybeToList . snd) . filter (\(range, inter) -> 
+    fromMaybe False (inRange range <$> inter)) $ 
+    (\(range, seg) -> (range, intersectLinear seg l)) <$> interpolate xs
+
+multLinear :: Rational -> Linear -> Linear
+multLinear v (Linear m b) = Linear (v * m) (v * b)
+
+reflectLinear :: Linear -> Linear
+reflectLinear (Linear m b) = Linear (-m) b
+
+maxPiecewise :: Rational -> Rational -> [Linear] -> Piecewise
+maxPiecewise _ _ [] = []
+maxPiecewise start end xs =
+  case nextInters of
+    [] ->  [(start, evalLinear best start), (end, evalLinear best end)]
+    _ -> let next = snd $ L.minimumBy (comparing snd) nextInters in
+      if (next > end) then [(start, bestValue), (end, evalLinear best end)]
+      else (start, bestValue) : maxPiecewise next end (fst <$> nextInters)
+  where (best, bestValue) = L.maximumBy (comparing snd) $ 
+          tagWith (flip evalLinear start) <$> xs
+        rest = xs \\ [best]
+        nextInters =
+          filter ((> start) . snd) $ 
+            concatMap (maybeToList . uncurry (fmap . (,)) . 
+              tagWith (intersectLinear best)) rest
+
+-- Linear function that relates \lambda with det(M + \lambda J)
+getArithDet :: Mat Int -> Linear
+getArithDet mat = Linear (realToFrac $ cofactorSum mat) (realToFrac $ det3 mat)
+
+-- Solving matrices, finding optimal configurations for arithmetic sequences.
 solve3 :: (Num a, Ord a) => [a] -> (a, [Int])
 solve3 vals = 
   (win, map fst $ filter ((== win) . snd) space)
   where obj = abs . det3 . chunksOf 3 . map ((vals !!) . subtract 1) . concat
         win = maximum . map snd $ space
-        space = map (\(i, config) -> (i, obj config)) . zip [1..] . fromEnumeration $ 
+        space = map (\(i, config) -> (i, obj config)) . zip [1..] $ 
                   matrixIncidences 3
     
--- Determine the 3 \times 3 matrix referred to by an integer code.
 recallConfig :: Int -> Mat Int
-recallConfig = (fromEnumeration (matrixIncidences 3) !!) . (subtract 1)
+recallConfig = (matrixIncidences 3 !!) . (subtract 1)
 
--- There is a single maximum configuration for the values {1 .. 9}:
---
--- *Det> solve3 [1..9]
--- (412,[4192])
--- *Det> recallConfig 4192
--- [[1,4,8],[5,9,3],[7,2,6]]
---
--- The story for {1 + i .. 9 + i} in general is not so simple:
---
--- *Det> map snd $ solve3 <$> map (\i -> map (+ i) [1..9]) [1..15]
--- [[4192],[4192],[4192],[4192],[4192],[4192],[4192,4285,4432],[4285,4432],[4285,4432],[4285,4432],[4285,4432],[4285,4432],[4285,4432],[4285,4432],[4285,4432]]
---
+-- The various linear functions det(M + \lambda J) for various configurations (M) of
+-- the values [0..9].
+allDets :: [Linear]
+allDets = unsigned ++ (multLinear (-1) <$> unsigned)
+  where unsigned = getArithDet <$> (map . map) (subtract 1) <$> matrixIncidences 3
 
-swapElements :: Int -> Int -> [a] -> [a]
-swapElements x y xs = concat
-  [ take (x - 1) xs, [xs !! (y - 1)]
-  , take (y - x - 1) $ drop x xs, [xs !! (x - 1)]
-  , drop y xs ]
+detsPos, detsNeg :: Piecewise
+detsPos = maxPiecewise 0 200 allDets
+detsNeg = maxPiecewise 0 200 (reflectLinear <$> allDets)
 
--- Swap single pairs of elements of an n \times n matrix in the most beneficial ways.
-greedyImprove :: (Ord a, Num a) => Int -> Mat a -> [Mat a]
-greedyImprove n mat = undefined
-  where
-    mats = tagWith det <$> choices
-    choices = fromEnumeration $ 
-      (\[x, y] -> chunksOf n . swapElements x y $ concat mat) <$> 
-        combinations 2 [1..n^2]
+data Report = Report (Maybe Rational) Rational [Int] 
+  -- Value calculated from interpolation of piecewise solution, 
+  -- optimum calculated imperically, matrices that give the optimal.
+
+instance Show Report where
+  show (Report hyp calc mats) = unlines
+    [ "Interpolated solution: " ++ show hyp
+    , "Real solution:         " ++ show calc
+    , "Configurations:        " ++ show mats ]
+
+reportPos, reportNeg :: Rational -> Report
+reportPos x = Report (evalPiecewise detsPos x) max mats
+  where (max, mats) = solve3 [x, x+1 .. x+9]
+reportNeg x = Report (evalPiecewise detsNeg x) max mats
+  where (max, mats) = solve3 [x, x-1 .. x-9]
 
