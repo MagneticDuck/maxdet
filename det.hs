@@ -114,8 +114,8 @@ solve3 vals =
 recallConfig :: Int -> Mat Int
 recallConfig = (matrixIncidences 3 !!) . (subtract 1)
 
--- The various linear functions det(M + \lambda J) for various configurations (M) of
--- the values [0..9].
+-- The various linear functions det(M + \lambda J) generated as M takes on all 
+-- configurations of the values [0..9].
 allDets :: [Linear]
 allDets = unsigned ++ (multLinear (-1) <$> unsigned)
   where unsigned = getArithDet <$> (map . map) (subtract 1) <$> matrixIncidences 3
@@ -125,8 +125,6 @@ detsPos = maxPiecewise 0 200 allDets
 detsNeg = maxPiecewise 0 200 (reflectLinear <$> allDets)
 
 data Report = Report (Maybe Rational) Rational [Int] 
-  -- Value calculated from interpolation of piecewise solution, 
-  -- optimum calculated imperically, matrices that give the optimal.
 
 instance Show Report where
   show (Report hyp calc mats) = unlines
@@ -134,6 +132,7 @@ instance Show Report where
     , "Real solution:         " ++ show calc
     , "Configurations:        " ++ show mats ]
 
+-- Report on the optimal configurations for the values [x, x+1 .. x+8] or [x, x-1 .. x-8]
 reportPos, reportNeg :: Rational -> Report
 reportPos x = Report (evalPiecewise detsPos x) max mats
   where (max, mats) = solve3 [x, x+1 .. x+9]
