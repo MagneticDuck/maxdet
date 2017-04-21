@@ -42,7 +42,7 @@ matrixIncidences n = do
 
 -- ** Utilities for {piecewise} linear functions in 1 dimension. **
 
-data Linear = Linear Rational Rational deriving (Eq) -- (m, b) -> m x + b
+data Linear = Linear { linearM :: Rational, linearB :: Rational } deriving (Eq) 
 type Piecewise = [(Rational, Rational)] -- Linear interpolation of the points.
 data Range = Range Rational Rational deriving (Show, Eq)
 
@@ -91,14 +91,15 @@ maxPiecewise start end xs =
       if (next > end) then [(start, bestValue), (end, evalLinear best end)]
       else (start, bestValue) : maxPiecewise next end (fst <$> nextInters)
   where (best, bestValue) = L.maximumBy (comparing snd) $ 
-          tagWith (flip evalLinear start) <$> xs
+          tagWith (flip evalLinear start) <$> (L.sortBy (comparing linearM) xs)
         rest = xs \\ [best]
         nextInters =
           filter ((> start) . snd) $ 
             concatMap (maybeToList . uncurry (fmap . (,)) . 
               tagWith (intersectLinear best)) rest
 
--- Linear function that relates \lambda with det(M + \lambda J)
+-- Linear function that relates \lambda with det(M + \lambda J) where M is {-4, -3 .. 4} 
+-- distributed according to the given configuration.
 getArithDet :: Mat Int -> Linear
 getArithDet mat = Linear (realToFrac $ cofactorSum mat) (realToFrac $ det3 mat)
 
@@ -114,15 +115,17 @@ solve3 vals =
 recallConfig :: Int -> Mat Int
 recallConfig = (matrixIncidences 3 !!) . (subtract 1)
 
+recallArithConfig :: Int -> Rational -> Mat Rational
+recallArithConfig i x = (map . map) ((+x) . subtract 1 . realToFrac) $ recallConfig i
+
 -- The various linear functions det(M + \lambda J) generated as M takes on all 
--- configurations of the values [0..9].
+-- configurations of the values [-4..+4].
 allDets :: [Linear]
 allDets = unsigned ++ (multLinear (-1) <$> unsigned)
-  where unsigned = getArithDet <$> (map . map) (subtract 1) <$> matrixIncidences 3
+  where unsigned = getArithDet <$> (map . map) (subtract 5) <$> matrixIncidences 3
 
-detsPos, detsNeg :: Piecewise
-detsPos = maxPiecewise 0 200 allDets
-detsNeg = maxPiecewise 0 200 (reflectLinear <$> allDets)
+maxDets :: Piecewise
+maxDets = maxPiecewise 0 200 allDets
 
 data Report = Report (Maybe Rational) Rational [Int] 
 
@@ -132,10 +135,7 @@ instance Show Report where
     , "Real solution:         " ++ show calc
     , "Configurations:        " ++ show mats ]
 
--- Report on the optimal configurations for the values [x, x+1 .. x+8] or [x, x-1 .. x-8]
-reportPos, reportNeg :: Rational -> Report
-reportPos x = Report (evalPiecewise detsPos x) max mats
-  where (max, mats) = solve3 [x, x+1 .. x+9]
-reportNeg x = Report (evalPiecewise detsNeg x) max mats
-  where (max, mats) = solve3 [x, x-1 .. x-9]
+report :: Rational -> Report
+report x = Report (evalPiecewise maxDets x) max mats
+  where (max, mats) = solve3 [x-4, x-3 .. x+4]
 
