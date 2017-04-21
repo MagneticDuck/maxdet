@@ -10,6 +10,9 @@ import Data.List.Split
 
 tagWith :: (a -> b) -> a -> (a, b)
 tagWith f x = (x, f x)
+ 
+toReal :: Rational -> Float
+toReal = realToFrac
 
 -- ** 3x3 matrix utilities. **
 type Mat a = [[a]]
@@ -56,6 +59,10 @@ interpolate pcs = zipWith makePair pcs (drop 1 pcs)
 
 instance Show Linear where show (Linear m b) = "(" ++ show m ++ ") x + (" ++ show b ++ ")"
 
+-- Right-compose with a shift by some value.
+shiftLinear :: Rational -> Linear -> Linear
+shiftLinear v (Linear m b) = (Linear m (b + v * m))
+
 evalLinear :: Linear -> Rational -> Rational
 evalLinear (Linear m b) x = m * x + b
 
@@ -100,8 +107,10 @@ maxPiecewise start end xs =
 
 -- Linear function that relates \lambda with det(M + \lambda J) where M is {-4, -3 .. 4} 
 -- distributed according to the given configuration.
-getArithDet :: Mat Int -> Linear
-getArithDet mat = Linear (realToFrac $ cofactorSum mat) (realToFrac $ det3 mat)
+recallArithDet :: Int -> Linear
+recallArithDet cfg = shiftLinear (-5) $
+  Linear (realToFrac $ cofactorSum mat) (realToFrac $ det3 mat)
+  where mat = recallConfig cfg
 
 -- Solving matrices, finding optimal configurations for arithmetic sequences.
 solve3 :: (Num a, Ord a) => [a] -> (a, [Int])
@@ -122,7 +131,7 @@ recallArithConfig i x = (map . map) ((+x) . subtract 1 . realToFrac) $ recallCon
 -- configurations of the values [-4..+4].
 allDets :: [Linear]
 allDets = unsigned ++ (multLinear (-1) <$> unsigned)
-  where unsigned = getArithDet <$> (map . map) (subtract 5) <$> matrixIncidences 3
+  where unsigned = recallArithDet <$> [1..5040] -- TODO: fast
 
 maxDets :: Piecewise
 maxDets = maxPiecewise 0 200 allDets
