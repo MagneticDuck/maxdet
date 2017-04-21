@@ -105,7 +105,7 @@ maxPiecewise start end xs =
             concatMap (maybeToList . uncurry (fmap . (,)) . 
               tagWith (intersectLinear best)) rest
 
--- Linear function that relates \lambda with det(M + \lambda J) where M is {-4, -3 .. 4} 
+-- Affine function that relates \lambda with det(M + \lambda J) where M is {-4, -3 .. 4} 
 -- distributed according to the given configuration.
 recallArithDet :: Int -> Linear
 recallArithDet cfg = shiftLinear (-5) $
