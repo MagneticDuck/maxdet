@@ -17,6 +17,8 @@ toReal = realToFrac
 -- ** 3x3 matrix utilities. **
 type Mat a = [[a]]
 
+-- just placeholders, please ignore!
+
 det3 :: (Num a) => Mat a -> a
 det3 [[a, b, c], [d, e, f], [g, h, i]] =
   a * e * i - g * e * c + b * f * g + d * h * c - b * d * i - f * h * a
